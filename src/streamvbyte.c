@@ -314,6 +314,7 @@ static const uint8_t *svb_decode_scalar(uint32_t *outPtr, const uint8_t *keyPtr,
 // prefix sum of 8 code byte lengths
 // little-endian
 uint64_t pfxlengths( uint64_t keys ) {
+  /*
   __m128i k = _mm_loadl_epi64((__m128i*) &keys);
   const __m128i lut = _mm_setr_epi8(2,3,4,5,3,4,5,6,4,5,6,7,5,6,7,8);
   const __m128i mask = _mm_set1_epi8(0x0F);
@@ -321,7 +322,11 @@ uint64_t pfxlengths( uint64_t keys ) {
   __m128i hi = _mm_shuffle_epi8(lut, _mm_and_si128(mask, _mm_srli_epi64(k,4)));
   __m128i lengths = _mm_add_epi8(hi,lo);
   uint64_t pfx = _mm_cvtsi128_si64(lengths);
-  return pfx * 0x0101010101010101;
+  */
+  uint64_t nibs = (keys & 0x3333333333333333) + (keys >> 2 & 0x3333333333333333);
+  uint64_t lengths = (nibs & 0x0F0F0F0F0F0F0F0F) + (nibs >> 4 & 0x0F0F0F0F0F0F0F0F);
+  lengths += 0x0404040404040404;
+  return lengths * 0x0101010101010101;
 }
 
 const uint8_t *svb_decode_avx_simple(uint32_t *out,
@@ -353,8 +358,8 @@ const uint8_t *svb_decode_avx_simple(uint32_t *out,
       _write_avx(out + 24,_decode_avx(key[6], pfx[5], dataPtr ));
       _write_avx(out + 28,_decode_avx(key[7], pfx[6], dataPtr ));
 
-      memcpy(&nextkeys, keyPtr64 + Offset + 1, sizeof(nextkeys));
-
+      nextkeys = *(keyPtr64 + Offset + 1);
+      
       dataPtr += pfx[7];
       pfxs = pfxlengths(nextkeys);
 
@@ -373,8 +378,8 @@ const uint8_t *svb_decode_avx_simple(uint32_t *out,
       _write_avx(out + 24,_decode_avx(key[6], pfx[5], dataPtr ));
       _write_avx(out + 28,_decode_avx(key[7], pfx[6], dataPtr ));
 
-      memcpy(&nextkeys, keyPtr64 + Offset + 1, sizeof(nextkeys));
-
+      nextkeys = *(keyPtr64 + Offset + 1);
+      
       dataPtr += pfx[7];
       pfxs = pfxlengths(nextkeys);
       
