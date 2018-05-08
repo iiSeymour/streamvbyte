@@ -248,21 +248,15 @@ size_t streamvbyte_encode(uint32_t *in, uint32_t count, uint8_t *out) {
 #ifdef __AVX__ // though we do not require AVX per se, it is a macro that MSVC
                // will issue
 
-static inline __m128i _decode_avx(uint32_t key,
-                                  const uint8_t *__restrict__ *dataPtrPtr) {
-  uint8_t len;
-  __m128i Data = _mm_loadu_si128((__m128i *)*dataPtrPtr);
+// use precalculated offset in source, no len update
+static inline __m128i _decode_avx(uint32_t key, uint8_t offset,
+                                  const uint8_t *__restrict__ dataPtrPtr) {
+  //  uint8_t len;
+  __m128i Data = _mm_loadu_si128((__m128i *)(dataPtrPtr + offset));
   uint8_t *pshuf = &shuffleTable[key];
   __m128i Shuf = *(__m128i *)pshuf;
-#ifdef AVOIDLENGTHLOOKUP
-  // this avoids the dependency on lengthTable, 
-  // see https://github.com/lemire/streamvbyte/issues/12
-  len = pshuf[12 + (key >> 6)] + 1;
-#else
-  len = lengthTable[key];
-#endif 
   Data = _mm_shuffle_epi8(Data, Shuf);
-  *dataPtrPtr += len;
+
   return Data;
 }
 
@@ -318,6 +312,19 @@ static const uint8_t *svb_decode_scalar(uint32_t *outPtr, const uint8_t *keyPtr,
 #ifdef __AVX__ // though we do not require AVX per se, it is a macro that MSVC
                // will issue
 
+// prefix sum of 8 code byte lengths
+// little-endian
+uint64_t pfxlengths( uint64_t keys ) {
+  __m128i k = _mm_loadl_epi64((__m128i*) &keys);
+  const __m128i lut = _mm_setr_epi8(2,3,4,5,3,4,5,6,4,5,6,7,5,6,7,8);
+  const __m128i mask = _mm_set1_epi8(0x0F);
+  __m128i lo = _mm_shuffle_epi8(lut, _mm_and_si128(mask, k)); 
+  __m128i hi = _mm_shuffle_epi8(lut, _mm_and_si128(mask, _mm_srli_epi64(k,4)));
+  __m128i lengths = _mm_add_epi8(hi,lo);
+  uint64_t pfx = _mm_cvtsi128_si64(lengths);
+  return pfx * 0x0101010101010101;
+}
+
 const uint8_t *svb_decode_avx_simple(uint32_t *out,
                                      const uint8_t *__restrict__ keyPtr,
                                      const uint8_t *__restrict__ dataPtr,
@@ -334,59 +341,68 @@ const uint8_t *svb_decode_avx_simple(uint32_t *out,
     memcpy(&nextkeys, keyPtr64 + Offset, sizeof(nextkeys));
     for (; Offset != 0; ++Offset) {
       uint64_t keys = nextkeys;
+      uint64_t pfxs = pfxlengths(keys);
+      uint8_t *pfx = (uint8_t *) &pfxs;
+      
       memcpy(&nextkeys, keyPtr64 + Offset + 1, sizeof(nextkeys));
 
-      Data = _decode_avx((keys & 0xFF), &dataPtr);
+      Data = _decode_avx((keys & 0xFF), 0,  dataPtr);
       _write_avx(out, Data);
-      Data = _decode_avx((keys & 0xFF00) >> 8, &dataPtr);
+      Data = _decode_avx((keys & 0xFF00) >> 8, pfx[0], dataPtr );
       _write_avx(out + 4, Data);
 
       keys >>= 16;
-      Data = _decode_avx((keys & 0xFF), &dataPtr);
+      Data = _decode_avx((keys & 0xFF), pfx[1], dataPtr);
       _write_avx(out + 8, Data);
-      Data = _decode_avx((keys & 0xFF00) >> 8, &dataPtr);
+      Data = _decode_avx((keys & 0xFF00) >> 8, pfx[2], dataPtr);
       _write_avx(out + 12, Data);
 
       keys >>= 16;
-      Data = _decode_avx((keys & 0xFF), &dataPtr);
+      Data = _decode_avx((keys & 0xFF), pfx[3], dataPtr);
       _write_avx(out + 16, Data);
-      Data = _decode_avx((keys & 0xFF00) >> 8, &dataPtr);
+      Data = _decode_avx((keys & 0xFF00) >> 8, pfx[4], dataPtr);
       _write_avx(out + 20, Data);
 
       keys >>= 16;
-      Data = _decode_avx((keys & 0xFF), &dataPtr);
+      Data = _decode_avx((keys & 0xFF), pfx[5], dataPtr);
       _write_avx(out + 24, Data);
-      Data = _decode_avx((keys & 0xFF00) >> 8, &dataPtr);
+      Data = _decode_avx((keys & 0xFF00) >> 8, pfx[6], dataPtr);
       _write_avx(out + 28, Data);
 
+      dataPtr += pfx[7];
       out += 32;
     }
     {
       uint64_t keys = nextkeys;
+      uint64_t pfxs = pfxlengths(keys);
+      uint8_t *pfx = (uint8_t *) &pfxs;
+      
+      memcpy(&nextkeys, keyPtr64 + Offset + 1, sizeof(nextkeys));
 
-      Data = _decode_avx((keys & 0xFF), &dataPtr);
+      Data = _decode_avx((keys & 0xFF), 0,  dataPtr);
       _write_avx(out, Data);
-      Data = _decode_avx((keys & 0xFF00) >> 8, &dataPtr);
+      Data = _decode_avx((keys & 0xFF00) >> 8, pfx[0], dataPtr );
       _write_avx(out + 4, Data);
 
       keys >>= 16;
-      Data = _decode_avx((keys & 0xFF), &dataPtr);
+      Data = _decode_avx((keys & 0xFF), pfx[1], dataPtr);
       _write_avx(out + 8, Data);
-      Data = _decode_avx((keys & 0xFF00) >> 8, &dataPtr);
+      Data = _decode_avx((keys & 0xFF00) >> 8, pfx[2], dataPtr);
       _write_avx(out + 12, Data);
 
       keys >>= 16;
-      Data = _decode_avx((keys & 0xFF), &dataPtr);
+      Data = _decode_avx((keys & 0xFF), pfx[3], dataPtr);
       _write_avx(out + 16, Data);
-      Data = _decode_avx((keys & 0xFF00) >> 8, &dataPtr);
+      Data = _decode_avx((keys & 0xFF00) >> 8, pfx[4], dataPtr);
       _write_avx(out + 20, Data);
 
       keys >>= 16;
-      Data = _decode_avx((keys & 0xFF), &dataPtr);
+      Data = _decode_avx((keys & 0xFF), pfx[5], dataPtr);
       _write_avx(out + 24, Data);
-      Data = _decode_avx((keys & 0xFF00) >> 8, &dataPtr);
+      Data = _decode_avx((keys & 0xFF00) >> 8, pfx[6], dataPtr);
       _write_avx(out + 28, Data);
 
+      dataPtr += pfx[7];
       out += 32;
     }
   }
