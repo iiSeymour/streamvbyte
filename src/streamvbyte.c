@@ -191,7 +191,7 @@ static const uint8_t *svb_decode_vector(uint32_t *out, const uint8_t *keyPtr, co
 size_t streamvbyte_encode4(__m128i in, uint8_t *outData, uint8_t *outCode) {
   const __m128i Ones = _mm_set1_epi32(0x01010101);
   //const __m128i GatherBits = _mm_set1_epi32(0x02040001);
-  const __m128i CodeTable = _mm_set_epi32(0, 0, 0x03030303, 0x02020100);
+  const __m128i CodeTable = _mm_set_epi32(0x03030303, 0x03030303, 0x02020202, 0x01010000);
   //  const __m128i GatherBytes = _mm_set_epi32(0, 0, 0x0D090501, 0x0D090501);
   const __m128i GatherBytes = _mm_set_epi32(0, 0, 0x0C080400, 0x0C080400);
   const __m128i Aggregators = _mm_set_epi32(0, 0, 0x01010101, 0x10400104);
@@ -202,7 +202,7 @@ size_t streamvbyte_encode4(__m128i in, uint8_t *outData, uint8_t *outCode) {
 
   m0 = _mm_or_si128(m0, _mm_srli_epi32(m0, 7));
   m0 = _mm_or_si128(m0, _mm_srli_epi32(m0, 14));
-  m0 = _mm_and_si128(_mm_srli_epi32(m0,1), _mm_set1_epi32(0x0F)); // 3-bit mask
+  //  m0 = _mm_and_si128(_mm_srli_epi32(m0,1), _mm_set1_epi32(0x0F)); // 3-bit mask
   
   m1 = _mm_shuffle_epi8(CodeTable, m0); // translate to a 2-bit encoded symbol
   m1 = _mm_shuffle_epi8(m1, GatherBytes); // gather bytes holding symbols; 2 copies
