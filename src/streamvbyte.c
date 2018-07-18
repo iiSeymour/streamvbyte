@@ -190,14 +190,20 @@ static const uint8_t *svb_decode_vector(uint32_t *out, const uint8_t *keyPtr, co
 
 size_t streamvbyte_encode4(__m128i in, uint8_t *outData, uint8_t *outCode) {
   const __m128i Ones = _mm_set1_epi32(0x01010101);
-  const __m128i GatherBits = _mm_set1_epi32(0x02040001);
+  //const __m128i GatherBits = _mm_set1_epi32(0x02040001);
   const __m128i CodeTable = _mm_set_epi32(0, 0, 0x03030303, 0x02020100);
-  const __m128i GatherBytes = _mm_set_epi32(0, 0, 0x0D090501, 0x0D090501);
+  //  const __m128i GatherBytes = _mm_set_epi32(0, 0, 0x0D090501, 0x0D090501);
+  const __m128i GatherBytes = _mm_set_epi32(0, 0, 0x0C080400, 0x0C080400);
   const __m128i Aggregators = _mm_set_epi32(0, 0, 0x01010101, 0x10400104);
 
   __m128i m0, m1;
   m0 = _mm_min_epu8(in, Ones); // set byte to 1 if it is not zero
-  m0 = _mm_madd_epi16(m0, GatherBits); // gather bits 8,16,24 to bits 8,9,10
+  //  m0 = _mm_madd_epi16(m0, GatherBits); // gather bits 8,16,24 to bits 8,9,10
+
+  m0 = _mm_or_si128(m0, _mm_srli_epi32(m0, 7));
+  m0 = _mm_or_si128(m0, _mm_srli_epi32(m0, 14));
+  m0 = _mm_and_si128(_mm_srli_epi32(m0,1), _mm_set1_epi32(0x0F)); // 3-bit mask
+  
   m1 = _mm_shuffle_epi8(CodeTable, m0); // translate to a 2-bit encoded symbol
   m1 = _mm_shuffle_epi8(m1, GatherBytes); // gather bytes holding symbols; 2 copies
   m1 = _mm_madd_epi16(m1, Aggregators); // sum dword_1, pack dword_0
@@ -311,22 +317,24 @@ static const uint8_t *svb_decode_scalar(uint32_t *outPtr, const uint8_t *keyPtr,
 #ifdef __AVX__ // though we do not require AVX per se, it is a macro that MSVC
                // will issue
 
-// prefix sum of 8 code byte lengths
+// byte-aligned prefix sum of 8 code byte lengths
 // little-endian
-uint64_t pfxlengths( uint64_t keys ) {
-  /*
+static inline uint64_t pfxlengths( uint64_t keys ) {
+
+#ifdef __VECTOR_LENGTHS__
   __m128i k = _mm_loadl_epi64((__m128i*) &keys);
   const __m128i lut = _mm_setr_epi8(2,3,4,5,3,4,5,6,4,5,6,7,5,6,7,8);
   const __m128i mask = _mm_set1_epi8(0x0F);
   __m128i lo = _mm_shuffle_epi8(lut, _mm_and_si128(mask, k)); 
   __m128i hi = _mm_shuffle_epi8(lut, _mm_and_si128(mask, _mm_srli_epi64(k,4)));
   __m128i lengths = _mm_add_epi8(hi,lo);
-  uint64_t pfx = _mm_cvtsi128_si64(lengths);
-  */
+  return _mm_cvtsi128_si64(lengths) * 0x0101010101010101;
+#else
   uint64_t nibs = (keys & 0x3333333333333333) + (keys >> 2 & 0x3333333333333333);
-  uint64_t lengths = (nibs & 0x0F0F0F0F0F0F0F0F) + (nibs >> 4 & 0x0F0F0F0F0F0F0F0F);
-  lengths += 0x0404040404040404;
+  uint64_t lengths = (nibs & 0x0F0F0F0F0F0F0F0F) + (nibs >> 4 & 0x0F0F0F0F0F0F0F0F)
+    + 0x0404040404040404;
   return lengths * 0x0101010101010101;
+#endif
 }
 
 const uint8_t *svb_decode_avx_simple(uint32_t *out,
@@ -348,15 +356,24 @@ const uint8_t *svb_decode_avx_simple(uint32_t *out,
     for (; Offset != 0; ++Offset) {
       uint8_t *key = (uint8_t *) &nextkeys;
       uint8_t *pfx = (uint8_t *) &pfxs;
-      
-      _write_avx(out,_decode_avx(key[0], 0,  dataPtr));
-      _write_avx(out + 4,_decode_avx(key[1], pfx[0], dataPtr ));
-      _write_avx(out + 8,_decode_avx(key[2], pfx[1], dataPtr ));
-      _write_avx(out + 12,_decode_avx(key[3], pfx[2], dataPtr ));
-      _write_avx(out + 16,_decode_avx(key[4], pfx[3], dataPtr ));
-      _write_avx(out + 20,_decode_avx(key[5], pfx[4], dataPtr ));
-      _write_avx(out + 24,_decode_avx(key[6], pfx[5], dataPtr ));
-      _write_avx(out + 28,_decode_avx(key[7], pfx[6], dataPtr ));
+
+      __m128i out0 = _decode_avx(key[0], 0,  dataPtr);
+      _write_avx(out, out0);
+      __m128i out4 = _decode_avx(key[1], pfx[0], dataPtr );
+      _write_avx(out + 4, out4);      
+      __m128i out8 = _decode_avx(key[2], pfx[1],  dataPtr);
+      _write_avx(out + 8, out8);
+      __m128i out12 = _decode_avx(key[3], pfx[2], dataPtr );
+      _write_avx(out + 12, out12);
+
+      __m128i out16 = _decode_avx(key[4], pfx[3], dataPtr);
+      _write_avx(out + 16, out16);
+      __m128i out20 = _decode_avx(key[5], pfx[4], dataPtr );
+      _write_avx(out + 20, out20);
+      __m128i out24 = _decode_avx(key[6], pfx[5], dataPtr);
+      _write_avx(out + 24, out24);
+      __m128i out28 = _decode_avx(key[7], pfx[6], dataPtr );
+      _write_avx(out + 28, out28);
 
       nextkeys = *(keyPtr64 + Offset + 1);
       
