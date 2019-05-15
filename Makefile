@@ -84,6 +84,9 @@ example: ./example.c    $(HEADERS) $(OBJECTS)
 perf: ./tests/perf.c    $(HEADERS) $(OBJECTS)
 	$(CC) $(CFLAGS) -o perf ./tests/perf.c -Iinclude  $(OBJECTS) -lm
 
+bench: ./tests/bench.c    $(HEADERS) $(OBJECTS)
+	$(CC) $(CFLAGS) -o bench ./tests/bench.c -Iinclude  $(OBJECTS) -lm
+
 
 writeseq: ./tests/writeseq.c    $(HEADERS) $(OBJECTS)
 	$(CC) $(CFLAGS) -o writeseq ./tests/writeseq.c -Iinclude  $(OBJECTS)
